@@ -1,9 +1,10 @@
-# General dependencies
 numpy==1.26.4
 pandas==2.1.1
 matplotlib==3.8.1
 Pillow==10.0.0
 scikit-learn==1.3.1
+torch==2.1.1+cu129
+torchvision==0.16.1+cu129
 torchmetrics==0.11.4
 torchsummary==1.5.1
 mediapipe==0.10.21
@@ -11,11 +12,3 @@ opencv-python==4.8.1.78
 jupyter==1.0.0
 notebook==7.1.2
 ipykernel==6.27.0
-
-# Dlib is optional, only if needed
-# dlib==19.24.2
-
-# GPU-specific PyTorch and torchvision are not included here
-# To install GPU-enabled PyTorch, run the following manually:
-# pip uninstall torch torchvision torchaudio
-# pip install torch==2.1.1+cu122 torchvision==0.16.1+cu122 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu122
