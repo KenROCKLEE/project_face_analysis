@@ -9,6 +9,3 @@ torchmetrics==0.11.4
 torchsummary==1.5.1
 mediapipe==0.10.21
 opencv-python==4.8.1.78
-jupyter==1.0.0
-notebook==7.1.2
-ipykernel==6.27.0
