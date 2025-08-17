@@ -7,9 +7,6 @@ __pycache__/
 env/
 venv/
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
 # OS files
 .DS_Store
 Thumbs.db
@@ -23,3 +20,6 @@ Thumbs.db
 # IDE settings
 .vscode/
 .idea/
+
+# Datasets
+datasets/raw/UTKFace
