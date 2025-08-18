@@ -3,75 +3,92 @@ UTKFace Age and Gender Prediction Pipeline in PyTorch
 Author: Your Name
 Date: 2025-08-18
 
-This script loads the UTKFace dataset, preprocesses images, builds and trains two separate models 
-for age (regression) and gender (binary classification),
-evaluates them with metrics, and saves the results and models.
+This script loads the UTKFace dataset (cleaned version), preprocesses images,
+builds and trains two separate models for age (classification) and gender (binary classification),
+evaluates them, and saves models and training curves.
 """
 
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import transforms
+from sklearn.model_selection import train_test_split
+from PIL import Image
 
-# Constants
+# ----------------- CONFIG -----------------
 IMG_SIZE = (128, 128)
-DATASET_DIR = 'datasets/raw/UTKFace'
+DATASET_DIR = 'datasets/clean'  # use clean folder
+AGE_DIR = os.path.join(DATASET_DIR, 'age')
+GENDER_DIR = os.path.join(DATASET_DIR, 'gender')
 MODEL_DIR = 'models'
 BATCH_SIZE = 32
-EPOCHS = 20
+EPOCHS_AGE = 60
+EPOCHS_GENDER = 20
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# 1. Load dataset
-def load_dataset(dataset_dir=DATASET_DIR, img_size=IMG_SIZE, max_images=None):
-    from PIL import Image
-    X, y_age, y_gender = [], [], []
-    files = [f for f in os.listdir(dataset_dir) if f.endswith('.jpg')]
-    if max_images:
-        files = files[:max_images]
-    for fname in files:
-        try:
-            age, gender, _, _ = fname.split('_', 3)
-            img_path = os.path.join(dataset_dir, fname)
-            img = Image.open(img_path).convert('RGB').resize(img_size)
-            img = np.array(img, dtype=np.float32) / 255.0
-            X.append(img)
-            y_age.append(float(age))
-            y_gender.append(int(gender))
-        except Exception as e:
-            print(f"Skipping {fname}: {e}")
-    X = np.array(X)
-    y_age = np.array(y_age)
-    y_gender = np.array(y_gender)
-    return X, y_age, y_gender
+# Age class labels (folder names)
+AGE_CLASSES = sorted([d for d in os.listdir(AGE_DIR) if os.path.isdir(os.path.join(AGE_DIR,d))])
+NUM_AGE_CLASSES = len(AGE_CLASSES)
 
-# 2. Split dataset
-def split_dataset(X, y_age, y_gender, test_size=0.2, val_size=0.1, random_state=42):
-    from sklearn.model_selection import train_test_split
-    X_train, X_test, y_age_train, y_age_test, y_gender_train, y_gender_test = train_test_split(
-        X, y_age, y_gender, test_size=test_size, random_state=random_state)
-    X_train, X_val, y_age_train, y_age_val, y_gender_train, y_gender_val = train_test_split(
-        X_train, y_age_train, y_gender_train, test_size=val_size, random_state=random_state)
-    return (X_train, X_val, X_test, y_age_train, y_age_val, y_age_test,
-            y_gender_train, y_gender_val, y_gender_test)
+# Gender classes
+GENDER_CLASSES = sorted([d for d in os.listdir(GENDER_DIR) if os.path.isdir(os.path.join(GENDER_DIR,d))])
+NUM_GENDER_CLASSES = len(GENDER_CLASSES)
 
-# 3. PyTorch dataset loader
-def create_dataloader(X, y, batch_size=BATCH_SIZE, task='age'):
+# ----------------- UTILS -----------------
+def load_dataset(clean_dir=DATASET_DIR, img_size=IMG_SIZE):
+    X_age, y_age = [], []
+    X_gender, y_gender = [], []
+
+    # Load age data
+    for idx, age_class in enumerate(AGE_CLASSES):
+        class_dir = os.path.join(AGE_DIR, age_class)
+        for fname in os.listdir(class_dir):
+            if fname.endswith('.jpg'):
+                img_path = os.path.join(class_dir, fname)
+                img = Image.open(img_path).convert('RGB').resize(img_size)
+                img = np.array(img, dtype=np.float32) / 255.0
+                X_age.append(img)
+                y_age.append(idx)
+    
+    # Load gender data
+    for idx, gender_class in enumerate(GENDER_CLASSES):
+        class_dir = os.path.join(GENDER_DIR, gender_class)
+        for fname in os.listdir(class_dir):
+            if fname.endswith('.jpg'):
+                img_path = os.path.join(class_dir, fname)
+                img = Image.open(img_path).convert('RGB').resize(img_size)
+                img = np.array(img, dtype=np.float32) / 255.0
+                X_gender.append(img)
+                y_gender.append(idx)
+
+    return np.array(X_age), np.array(y_age), np.array(X_gender), np.array(y_gender)
+
+def split_dataset(X_age, y_age, X_gender, y_gender, test_size=0.2, val_size=0.1, random_state=42):
+    # Age split
+    X_age_train, X_age_test, y_age_train, y_age_test = train_test_split(X_age, y_age, test_size=test_size, random_state=random_state)
+    X_age_train, X_age_val, y_age_train, y_age_val = train_test_split(X_age_train, y_age_train, test_size=val_size, random_state=random_state)
+
+    # Gender split
+    X_gender_train, X_gender_test, y_gender_train, y_gender_test = train_test_split(X_gender, y_gender, test_size=test_size, random_state=random_state)
+    X_gender_train, X_gender_val, y_gender_train, y_gender_val = train_test_split(X_gender_train, y_gender_train, test_size=val_size, random_state=random_state)
+
+    return X_age_train, X_age_val, X_age_test, y_age_train, y_age_val, y_age_test, \
+           X_gender_train, X_gender_val, X_gender_test, y_gender_train, y_gender_val, y_gender_test
+
+def create_dataloader(X, y, batch_size=BATCH_SIZE):
     X_tensor = torch.tensor(X, dtype=torch.float32).permute(0,3,1,2)
-    y_tensor = torch.tensor(y, dtype=torch.float32)
+    y_tensor = torch.tensor(y, dtype=torch.long)  # use long for classification
     dataset = TensorDataset(X_tensor, y_tensor)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    return loader
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-# 4. CNN model
+# ----------------- MODEL -----------------
 class BaseCNN(nn.Module):
     def __init__(self, output_units=1, task='age'):
         super().__init__()
-        self.task = task
         self.features = nn.Sequential(
             nn.Conv2d(3, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2), nn.BatchNorm2d(32),
             nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2), nn.BatchNorm2d(64),
@@ -79,11 +96,12 @@ class BaseCNN(nn.Module):
             nn.Flatten()
         )
         self.classifier = nn.Sequential(
-            nn.Linear(128 * (IMG_SIZE[0]//8) * (IMG_SIZE[1]//8), 128),
+            nn.Linear(128*(IMG_SIZE[0]//8)*(IMG_SIZE[1]//8), 128),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, output_units)
         )
+        self.task = task
 
     def forward(self, x):
         x = self.features(x)
@@ -92,15 +110,15 @@ class BaseCNN(nn.Module):
             x = torch.sigmoid(x)
         return x
 
-# 5. Training function with metrics
-def train_model(model, train_loader, val_loader, task='age', epochs=EPOCHS, lr=1e-3, model_name='model.pth'):
+# ----------------- TRAIN -----------------
+def train_model(model, train_loader, val_loader, task='age', epochs=20, lr=1e-3, model_name='model.pth'):
     model.to(DEVICE)
     if task=='age':
-        criterion = nn.MSELoss()
-    elif task=='gender':
+        criterion = nn.CrossEntropyLoss()
+    else:  # gender
         criterion = nn.BCELoss()
-
     optimizer = optim.Adam(model.parameters(), lr=lr)
+
     train_losses, val_losses, val_metrics = [], [], []
 
     for epoch in range(1, epochs+1):
@@ -108,10 +126,13 @@ def train_model(model, train_loader, val_loader, task='age', epochs=EPOCHS, lr=1
         running_loss = 0
         for xb, yb in train_loader:
             xb, yb = xb.to(DEVICE), yb.to(DEVICE)
-            output = model(xb).squeeze()
+            output = model(xb)
+            if task=='gender':
+                output = output.squeeze()
+                yb = yb.float()
             loss = criterion(output, yb)
-            loss.backward()
             optimizer.zero_grad()
+            loss.backward()
             optimizer.step()
             running_loss += loss.item()
         avg_train = running_loss / len(train_loader)
@@ -124,38 +145,39 @@ def train_model(model, train_loader, val_loader, task='age', epochs=EPOCHS, lr=1
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb, yb = xb.to(DEVICE), yb.to(DEVICE)
-                output = model(xb).squeeze()
+                output = model(xb)
+                if task=='gender':
+                    output = output.squeeze()
+                    yb = yb.float()
                 loss = criterion(output, yb)
                 val_loss += loss.item()
 
                 # Metrics
-                if task=='gender':
+                if task=='age':
+                    pred = output.argmax(dim=1)
+                    correct += (pred==yb).sum().item()
+                    total += yb.size(0)
+                else:
                     pred = (output>0.5).float()
                     correct += (pred==yb).sum().item()
                     total += yb.size(0)
-                elif task=='age':
-                    # MAE
-                    correct += torch.sum(torch.abs(output-yb)).item()
-                    total += yb.size(0)
 
         avg_val = val_loss / len(val_loader)
+        val_metric = correct / total
         train_losses.append(avg_train)
         val_losses.append(avg_val)
+        val_metrics.append(val_metric)
 
-        # Compute metric
         if task=='age':
-            metric_val = correct / total  # mean absolute error
-            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val:.4f} | Val MAE: {metric_val:.2f}")
+            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val:.4f} | Val Acc: {val_metric:.4f}")
         else:
-            metric_val = correct / total
-            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val:.4f} | Val Acc: {metric_val:.4f}")
-
-        val_metrics.append(metric_val)
+            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val:.4f} | Val Acc: {val_metric:.4f}")
 
     # Save model
+    os.makedirs(MODEL_DIR, exist_ok=True)
     torch.save(model.state_dict(), os.path.join(MODEL_DIR, model_name))
 
-    # Plot
+    # Plot curves
     plt.figure(figsize=(8,4))
     plt.plot(train_losses, label='Train Loss')
     plt.plot(val_losses, label='Val Loss')
@@ -165,40 +187,40 @@ def train_model(model, train_loader, val_loader, task='age', epochs=EPOCHS, lr=1
     plt.close()
 
     plt.figure(figsize=(8,4))
-    plt.plot(val_metrics, label='Validation Metric')
+    plt.plot(val_metrics, label='Validation Accuracy')
     plt.title(f'{task} Validation Metric')
     plt.legend()
     plt.savefig(os.path.join(MODEL_DIR, f'{task}_metric_curve.png'))
     plt.close()
 
-# 6. Main pipeline
+# ----------------- MAIN -----------------
 def main():
-    os.makedirs(MODEL_DIR, exist_ok=True)
     print("Loading dataset...")
-    X, y_age, y_gender = load_dataset()
-    print(f"Total samples: {len(X)}")
-    
+    X_age, y_age, X_gender, y_gender = load_dataset()
+    print(f"Total age samples: {len(X_age)} | Total gender samples: {len(X_gender)}")
+
     # Split
-    X_train, X_val, X_test, y_age_train, y_age_val, y_age_test, \
-    y_gender_train, y_gender_val, y_gender_test = split_dataset(X, y_age, y_gender)
+    X_age_train, X_age_val, X_age_test, y_age_train, y_age_val, y_age_test, \
+    X_gender_train, X_gender_val, X_gender_test, y_gender_train, y_gender_val, y_gender_test = \
+        split_dataset(X_age, y_age, X_gender, y_gender)
 
     # Dataloaders
-    age_train_loader = create_dataloader(X_train, y_age_train, task='age')
-    age_val_loader = create_dataloader(X_val, y_age_val, task='age')
-    gender_train_loader = create_dataloader(X_train, y_gender_train, task='gender')
-    gender_val_loader = create_dataloader(X_val, y_gender_val, task='gender')
+    age_train_loader = create_dataloader(X_age_train, y_age_train)
+    age_val_loader = create_dataloader(X_age_val, y_age_val)
+    gender_train_loader = create_dataloader(X_gender_train, y_gender_train)
+    gender_val_loader = create_dataloader(X_gender_val, y_gender_val)
 
-    # Age
+    # Train Age model
     print("Training Age model...")
-    age_model = BaseCNN(output_units=1, task='age')
-    train_model(age_model, age_train_loader, age_val_loader, task='age', model_name='age_model.pth')
+    age_model = BaseCNN(output_units=NUM_AGE_CLASSES, task='age')
+    train_model(age_model, age_train_loader, age_val_loader, task='age', epochs=EPOCHS_AGE, model_name='age_model.pth')
 
-    # Gender
+    # Train Gender model
     print("Training Gender model...")
     gender_model = BaseCNN(output_units=1, task='gender')
-    train_model(gender_model, gender_train_loader, gender_val_loader, task='gender', model_name='gender_model.pth')
+    train_model(gender_model, gender_train_loader, gender_val_loader, task='gender', epochs=EPOCHS_GENDER, model_name='gender_model.pth')
 
-    print("All models trained and saved.")
+    print("All models trained and saved successfully!")
 
 if __name__ == '__main__':
     main()
