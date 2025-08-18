@@ -23,3 +23,5 @@ Thumbs.db
 
 # Datasets
 datasets/raw/UTKFace
+datasets/clean/age
+datasets/clean/gender
