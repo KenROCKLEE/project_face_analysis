@@ -1,178 +1,224 @@
 """
-UTKFace Age, Gender, Race Prediction Pipeline
+UTKFace Age, Gender, Race Prediction Pipeline (PyTorch)
 Author: Your Name
 Date: 2025-08-18
-
-This script loads the UTKFace dataset, preprocesses images, builds and trains three separate models for age (regression), gender (binary classification), and race (multiclass classification), evaluates them, and saves the results and models.
 """
 
 import os
+from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.preprocessing.image import load_img, img_to_array
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import ModelCheckpoint
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+
+# ============================
 # Constants
-IMG_SIZE = (128, 128)
+# ============================
+IMG_SIZE = 128
 DATASET_DIR = 'datasets/raw/UTKFace'
 MODEL_DIR = 'models'
+BATCH_SIZE = 32
+EPOCHS = 10
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+NUM_RACES = 5
 
-# 1. Load dataset and parse labels
-def load_dataset(dataset_dir=DATASET_DIR, img_size=IMG_SIZE, max_images=None):
-    X, y_age, y_gender, y_race = [], [], [], []
+# ============================
+# Dataset
+# ============================
+class UTKFaceDataset(Dataset):
+    def __init__(self, image_paths, ages, genders, races, transform=None):
+        self.image_paths = image_paths
+        self.ages = ages
+        self.genders = genders
+        self.races = races
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        img = Image.open(self.image_paths[idx]).convert("RGB")
+        if self.transform:
+            img = self.transform(img)
+        age = torch.tensor(self.ages[idx], dtype=torch.float32)
+        gender = torch.tensor(self.genders[idx], dtype=torch.float32)
+        race = torch.tensor(self.races[idx], dtype=torch.long)
+        return img, age, gender, race
+
+# ============================
+# Load dataset
+# ============================
+def load_dataset(dataset_dir=DATASET_DIR, max_images=None):
+    image_paths, y_age, y_gender, y_race = [], [], [], []
     files = [f for f in os.listdir(dataset_dir) if f.endswith('.jpg')]
     if max_images:
         files = files[:max_images]
-    for fname in files:
+    for f in files:
         try:
-            age, gender, race, _ = fname.split('_', 3)
-            img_path = os.path.join(dataset_dir, fname)
-            img = load_img(img_path, target_size=img_size)
-            img = img_to_array(img)
-            X.append(img)
+            age, gender, race, _ = f.split("_", 3)
+            image_paths.append(os.path.join(dataset_dir, f))
             y_age.append(int(age))
             y_gender.append(int(gender))
             y_race.append(int(race))
-        except Exception as e:
-            print(f"Skipping {fname}: {e}")
-    X = np.array(X, dtype='float32')
-    y_age = np.array(y_age)
-    y_gender = np.array(y_gender)
-    y_race = np.array(y_race)
-    return X, y_age, y_gender, y_race
+        except:
+            continue
+    return image_paths, y_age, y_gender, y_race
 
-# 2. Preprocess images
-def preprocess_images(X):
-    X = X / 255.0  # Normalize to [0,1]
-    return X
+# ============================
+# Model
+# ============================
+class CNNModel(nn.Module):
+    def __init__(self, output_units, task_type='regression'):
+        super().__init__()
+        self.task_type = task_type
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Flatten()
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(128*(IMG_SIZE//8)*(IMG_SIZE//8), 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, output_units)
+        )
+        if self.task_type == 'classification' and output_units == 1:
+            self.activation = nn.Sigmoid()
+        elif self.task_type == 'classification':
+            self.activation = nn.Softmax(dim=1)
+        else:
+            self.activation = nn.Identity()
 
-# 3. Split dataset
-def split_dataset(X, y_age, y_gender, y_race, test_size=0.2, val_size=0.1, random_state=42):
-    X_train, X_test, y_age_train, y_age_test, y_gender_train, y_gender_test, y_race_train, y_race_test = train_test_split(
-        X, y_age, y_gender, y_race, test_size=test_size, random_state=random_state)
-    X_train, X_val, y_age_train, y_age_val, y_gender_train, y_gender_val, y_race_train, y_race_val = train_test_split(
-        X_train, y_age_train, y_gender_train, y_race_train, test_size=val_size, random_state=random_state)
-    return (X_train, X_val, X_test, y_age_train, y_age_val, y_age_test,
-            y_gender_train, y_gender_val, y_gender_test, y_race_train, y_race_val, y_race_test)
+    def forward(self, x):
+        x = self.features(x)
+        x = self.classifier(x)
+        x = self.activation(x)
+        return x
 
-# 4. Model builders
-def build_base_cnn(output_units, output_activation):
-    model = Sequential([
-        Conv2D(32, (3,3), activation='relu', input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3)),
-        MaxPooling2D(2,2),
-        BatchNormalization(),
-        Conv2D(64, (3,3), activation='relu'),
-        MaxPooling2D(2,2),
-        BatchNormalization(),
-        Conv2D(128, (3,3), activation='relu'),
-        MaxPooling2D(2,2),
-        BatchNormalization(),
-        Flatten(),
-        Dense(128, activation='relu'),
-        Dropout(0.5),
-        Dense(output_units, activation=output_activation)
-    ])
-    return model
+# ============================
+# Training function
+# ============================
+def train_model(model, dataloader, criterion, optimizer, task):
+    model.train()
+    running_loss = 0.0
+    for imgs, ages, genders, races in dataloader:
+        imgs = imgs.to(DEVICE)
+        if task == 'age':
+            labels = ages.unsqueeze(1).to(DEVICE)
+        elif task == 'gender':
+            labels = genders.unsqueeze(1).to(DEVICE)
+        elif task == 'race':
+            labels = races.to(DEVICE)
+        optimizer.zero_grad()
+        outputs = model(imgs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        running_loss += loss.item() * imgs.size(0)
+    return running_loss / len(dataloader.dataset)
 
-def build_age_model():
-    return build_base_cnn(1, 'linear')
+# ============================
+# Evaluation function
+# ============================
+def evaluate_model(model, dataloader, task):
+    model.eval()
+    total, correct, total_loss = 0, 0, 0
+    criterion = nn.MSELoss() if task == 'age' else (nn.BCELoss() if task=='gender' else nn.CrossEntropyLoss())
+    with torch.no_grad():
+        for imgs, ages, genders, races in dataloader:
+            imgs = imgs.to(DEVICE)
+            if task == 'age':
+                labels = ages.unsqueeze(1).to(DEVICE)
+            elif task == 'gender':
+                labels = genders.unsqueeze(1).to(DEVICE)
+            elif task == 'race':
+                labels = races.to(DEVICE)
+            outputs = model(imgs)
+            loss = criterion(outputs, labels)
+            total_loss += loss.item() * imgs.size(0)
+            if task == 'gender':
+                predicted = (outputs > 0.5).float()
+                correct += (predicted == labels).sum().item()
+            elif task == 'race':
+                _, predicted = torch.max(outputs, 1)
+                correct += (predicted == labels).sum().item()
+            total += imgs.size(0)
+    avg_loss = total_loss / total
+    accuracy = correct / total if task in ['gender','race'] else None
+    return avg_loss, accuracy
 
-def build_gender_model():
-    return build_base_cnn(1, 'sigmoid')
-
-def build_race_model():
-    return build_base_cnn(5, 'softmax')
-
-# 5. Training and evaluation
-def train_and_evaluate(model, X_train, y_train, X_val, y_val, X_test, y_test, model_path, task='age', epochs=10, batch_size=32):
-    if task == 'age':
-        loss = 'mse'
-        metrics = ['mae']
-    elif task == 'gender':
-        loss = 'binary_crossentropy'
-        metrics = ['accuracy']
-    elif task == 'race':
-        loss = 'categorical_crossentropy'
-        metrics = ['accuracy']
-    else:
-        raise ValueError('Unknown task')
-
-    model.compile(optimizer=Adam(), loss=loss, metrics=metrics)
-    checkpoint = ModelCheckpoint(model_path, save_best_only=True, monitor='val_loss', mode='min')
-    history = model.fit(
-        X_train, y_train,
-        validation_data=(X_val, y_val),
-        epochs=epochs,
-        batch_size=batch_size,
-        callbacks=[checkpoint],
-        verbose=2
-    )
-    model.load_weights(model_path)
-    results = model.evaluate(X_test, y_test, verbose=0)
-    print(f"Test results for {task}: {dict(zip(model.metrics_names, results))}")
-    return history, results
-
-# 6. Plot training history
-def plot_history(history, task, save_dir='models'):
-    plt.figure(figsize=(10,4))
-    plt.subplot(1,2,1)
-    plt.plot(history.history['loss'], label='train')
-    plt.plot(history.history['val_loss'], label='val')
-    plt.title(f'{task} Loss')
-    plt.legend()
-    plt.subplot(1,2,2)
-    metric = 'accuracy' if 'accuracy' in history.history else 'mae'
-    plt.plot(history.history[metric], label='train')
-    plt.plot(history.history['val_' + metric], label='val')
-    plt.title(f'{task} {metric.title()}')
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, f'{task}_history.png'))
-    plt.close()
-
-# 7. Main pipeline
+# ============================
+# Main pipeline
+# ============================
 def main():
     os.makedirs(MODEL_DIR, exist_ok=True)
-    print('Loading dataset...')
-    X, y_age, y_gender, y_race = load_dataset()
-    print(f'Total samples: {len(X)}')
-    X = preprocess_images(X)
-    y_gender_bin = y_gender
-    y_race_cat = to_categorical(y_race, num_classes=5)
-    (X_train, X_val, X_test, y_age_train, y_age_val, y_age_test,
-     y_gender_train, y_gender_val, y_gender_test, y_race_train, y_race_val, y_race_test) = split_dataset(
-        X, y_age, y_gender_bin, y_race_cat)
+    print("Loading dataset...")
+    image_paths, y_age, y_gender, y_race = load_dataset()
+    
+    # Split dataset
+    X_train, X_test, y_age_train, y_age_test, y_gender_train, y_gender_test, y_race_train, y_race_test = train_test_split(
+        image_paths, y_age, y_gender, y_race, test_size=0.2, random_state=42)
+    X_train, X_val, y_age_train, y_age_val, y_gender_train, y_gender_val, y_race_train, y_race_val = train_test_split(
+        X_train, y_age_train, y_gender_train, y_race_train, test_size=0.1, random_state=42)
 
-    # Age model
-    print('Training age model...')
-    age_model = build_age_model()
-    age_history, age_results = train_and_evaluate(
-        age_model, X_train, y_age_train, X_val, y_age_val, X_test, y_age_test,
-        os.path.join(MODEL_DIR, 'age_model.h5'), task='age')
-    plot_history(age_history, 'age', save_dir=MODEL_DIR)
+    transform = transforms.Compose([
+        transforms.Resize((IMG_SIZE, IMG_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5]*3, [0.5]*3)
+    ])
 
-    # Gender model
-    print('Training gender model...')
-    gender_model = build_gender_model()
-    gender_history, gender_results = train_and_evaluate(
-        gender_model, X_train, y_gender_train, X_val, y_gender_val, X_test, y_gender_test,
-        os.path.join(MODEL_DIR, 'gender_model.h5'), task='gender')
-    plot_history(gender_history, 'gender', save_dir=MODEL_DIR)
+    train_dataset = UTKFaceDataset(X_train, y_age_train, y_gender_train, y_race_train, transform=transform)
+    val_dataset   = UTKFaceDataset(X_val, y_age_val, y_gender_val, y_race_val, transform=transform)
+    test_dataset  = UTKFaceDataset(X_test, y_age_test, y_gender_test, y_race_test, transform=transform)
 
-    # Race model
-    print('Training race model...')
-    race_model = build_race_model()
-    race_history, race_results = train_and_evaluate(
-        race_model, X_train, y_race_train, X_val, y_race_val, X_test, y_race_test,
-        os.path.join(MODEL_DIR, 'race_model.h5'), task='race')
-    plot_history(race_history, 'race', save_dir=MODEL_DIR)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader   = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    test_loader  = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    print('All models trained and saved.')
+    # ====== Age model (regression) ======
+    age_model = CNNModel(1, task_type='regression').to(DEVICE)
+    age_optimizer = optim.Adam(age_model.parameters(), lr=0.001)
+    age_criterion = nn.MSELoss()
+    print("Training age model...")
+    for epoch in range(EPOCHS):
+        loss = train_model(age_model, train_loader, age_criterion, age_optimizer, task='age')
+        print(f"Epoch {epoch+1}/{EPOCHS}, Age Loss: {loss:.4f}")
+    torch.save(age_model.state_dict(), os.path.join(MODEL_DIR, "age_model.pth"))
 
-if __name__ == '__main__':
+    # ====== Gender model (binary) ======
+    gender_model = CNNModel(1, task_type='classification').to(DEVICE)
+    gender_optimizer = optim.Adam(gender_model.parameters(), lr=0.001)
+    gender_criterion = nn.BCELoss()
+    print("Training gender model...")
+    for epoch in range(EPOCHS):
+        loss = train_model(gender_model, train_loader, gender_criterion, gender_optimizer, task='gender')
+        print(f"Epoch {epoch+1}/{EPOCHS}, Gender Loss: {loss:.4f}")
+    torch.save(gender_model.state_dict(), os.path.join(MODEL_DIR, "gender_model.pth"))
+
+    # ====== Race model (multiclass) ======
+    race_model = CNNModel(NUM_RACES, task_type='classification').to(DEVICE)
+    race_optimizer = optim.Adam(race_model.parameters(), lr=0.001)
+    race_criterion = nn.CrossEntropyLoss()
+    print("Training race model...")
+    for epoch in range(EPOCHS):
+        loss = train_model(race_model, train_loader, race_criterion, race_optimizer, task='race')
+        print(f"Epoch {epoch+1}/{EPOCHS}, Race Loss: {loss:.4f}")
+    torch.save(race_model.state_dict(), os.path.join(MODEL_DIR, "race_model.pth"))
+
+    # ====== Evaluation ======
+    print("Evaluating models...")
+    age_loss, _ = evaluate_model(age_model, test_loader, 'age')
+    gender_loss, gender_acc = evaluate_model(gender_model, test_loader, 'gender')
+    race_loss, race_acc = evaluate_model(race_model, test_loader, 'race')
+    print(f"Test Age Loss: {age_loss:.4f}")
+    print(f"Test Gender Loss: {gender_loss:.4f}, Accuracy: {gender_acc:.4f}")
+    print(f"Test Race Loss: {race_loss:.4f}, Accuracy: {race_acc:.4f}")
+
+if __name__ == "__main__":
     main()
