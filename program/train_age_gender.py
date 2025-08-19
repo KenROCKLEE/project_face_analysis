@@ -27,7 +27,7 @@ GENDER_DIR = os.path.join(DATASET_DIR, 'gender')
 MODEL_DIR = 'models'
 BATCH_SIZE = 32
 EPOCHS_AGE = 60
-EPOCHS_GENDER = 20
+EPOCHS_GENDER = 25
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Age class labels (folder names)
