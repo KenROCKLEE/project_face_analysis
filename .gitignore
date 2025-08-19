@@ -25,3 +25,4 @@ Thumbs.db
 datasets/raw/UTKFace
 datasets/clean/age
 datasets/clean/gender
+datasets/age_gender.csv
