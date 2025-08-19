@@ -6,7 +6,7 @@ import random
 # --- CONFIG ---
 AGE_DIR = 'datasets/clean/age'
 IMG_SIZE = (128, 128)
-AUGMENT_PER_IMAGE = 2  # number of augmented versions per original image
+AUGMENT_PER_IMAGE = 1 # number of augmented versions per original image
 
 # Define augmentation transforms
 augment_transform = transforms.Compose([
