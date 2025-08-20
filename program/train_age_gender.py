@@ -1,11 +1,7 @@
 """
 UTKFace Age and Gender Prediction Pipeline in PyTorch
 Author: Your Name
-Date: 2025-08-18
-
-This script loads the UTKFace dataset, preprocesses images,
-builds and trains two separate models for age (regression) and gender (binary classification),
-evaluates them, and saves models and training curves.
+Date: 2025-08-20
 """
 
 import os
@@ -15,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-from torchvision import transforms
+from torchvision import transforms, models
 from sklearn.model_selection import train_test_split
 from PIL import Image
 
@@ -25,16 +21,16 @@ AGE_DIR = 'datasets/raw/UTKFace'  # Directory for age data (raw)
 GENDER_DIR = 'datasets/clean/gender' # Directory for gender data (cleaned)
 MODEL_DIR = 'models'
 BATCH_SIZE = 32
-EPOCHS_AGE = 100 # Increased epochs for age model
-EPOCHS_GENDER = 10
+EPOCHS_AGE = 100 
+EPOCHS_GENDER = 100 # Increased epochs for better training
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Gender classes
 GENDER_CLASSES = sorted([d for d in os.listdir(GENDER_DIR) if os.path.isdir(os.path.join(GENDER_DIR,d))])
 NUM_GENDER_CLASSES = len(GENDER_CLASSES)
 
-# Data augmentation for age model
-age_train_transforms = transforms.Compose([
+# Data augmentation
+train_transforms = transforms.Compose([
     transforms.ToPILImage(),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(10),
@@ -43,7 +39,7 @@ age_train_transforms = transforms.Compose([
     transforms.ToTensor(),
 ])
 
-age_val_transforms = transforms.Compose([
+val_transforms = transforms.Compose([
     transforms.ToPILImage(),
     transforms.Resize(IMG_SIZE),
     transforms.ToTensor(),
@@ -59,7 +55,6 @@ def load_dataset(age_dir=AGE_DIR, gender_dir=GENDER_DIR, img_size=IMG_SIZE):
     for fname in os.listdir(age_dir):
         if fname.endswith('.jpg'):
             try:
-                # Parse age from filename
                 parts = fname.split('_')
                 age = int(parts[0])
                 
@@ -71,7 +66,6 @@ def load_dataset(age_dir=AGE_DIR, gender_dir=GENDER_DIR, img_size=IMG_SIZE):
                 y_age.append(age)
             
             except (ValueError, IndexError):
-                # Skip files that don't match the expected naming format
                 continue
     
     # Load gender data from the cleaned gender directory
@@ -91,11 +85,9 @@ def load_dataset(age_dir=AGE_DIR, gender_dir=GENDER_DIR, img_size=IMG_SIZE):
     return np.array(X_age), np.array(y_age), np.array(X_gender), np.array(y_gender)
 
 def split_dataset(X_age, y_age, X_gender, y_gender, test_size=0.2, val_size=0.1, random_state=42):
-    # Age split
     X_age_train, X_age_test, y_age_train, y_age_test = train_test_split(X_age, y_age, test_size=test_size, random_state=random_state)
     X_age_train, X_age_val, y_age_train, y_age_val = train_test_split(X_age_train, y_age_train, test_size=val_size, random_state=random_state)
 
-    # Gender split (untouched)
     X_gender_train, X_gender_test, y_gender_train, y_gender_test = train_test_split(X_gender, y_gender, test_size=test_size, random_state=random_state)
     X_gender_train, X_gender_val, y_gender_train, y_gender_val = train_test_split(X_gender_train, y_gender_train, test_size=val_size, random_state=random_state)
 
@@ -123,23 +115,28 @@ def create_dataloader(X, y, batch_size=BATCH_SIZE, task='age', transforms=None):
         dataset = AgeDataset(X, y, transform=transforms)
         return DataLoader(dataset, batch_size=batch_size, shuffle=True)
     else: # gender
+        # We handle gender transformations directly in the loop to allow for upsampling/balancing
         X_tensor = torch.tensor(X, dtype=torch.float32).permute(0,3,1,2)
         y_tensor = torch.tensor(y, dtype=torch.long)
         dataset = TensorDataset(X_tensor, y_tensor)
         return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 # ----------------- MODEL -----------------
-class BaseCNN(nn.Module):
+class ResNetModel(nn.Module):
     def __init__(self, output_units=1, task='age'):
         super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2), nn.BatchNorm2d(32),
-            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2), nn.BatchNorm2d(64),
-            nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2), nn.BatchNorm2d(128),
-            nn.Flatten()
-        )
-        self.classifier = nn.Sequential(
-            nn.Linear(128*(IMG_SIZE[0]//8)*(IMG_SIZE[1]//8), 128),
+        
+        # Load pre-trained ResNet-18 model
+        self.resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        
+        # Freeze the ResNet layers
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+            
+        # Replace the final classification layer
+        num_features = self.resnet.fc.in_features
+        self.resnet.fc = nn.Sequential(
+            nn.Linear(num_features, 128),
             nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(128, output_units)
@@ -147,9 +144,9 @@ class BaseCNN(nn.Module):
         self.task = task
 
     def forward(self, x):
-        x = self.features(x)
-        x = self.classifier(x)
-        if self.task=='gender':
+        # ResNet expects 3-channel input
+        x = self.resnet(x)
+        if self.task == 'gender':
             x = torch.sigmoid(x)
         return x
 
@@ -158,38 +155,38 @@ def train_model(model, train_loader, val_loader, task='age', epochs=20, lr=1e-3,
     model.to(DEVICE)
     if task=='age':
         criterion = nn.L1Loss() # MAE for regression
-    else:  # gender
+    else: # gender
         criterion = nn.BCELoss()
+    
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    # Early Stopping and Learning Rate Scheduler for age model
-    if task == 'age':
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-        best_val_mae = float('inf')
-        patience_counter = 0
-        best_model_state = None
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    best_val_loss = float('inf')
+    patience_counter = 0
+    best_model_state = None
 
     train_losses, val_losses, val_metrics = [], [], []
 
-    for epoch in range(1, epochs+1):
+    for epoch in range(1, epochs + 1):
         model.train()
         running_loss = 0
         for xb, yb in train_loader:
             xb, yb = xb.to(DEVICE), yb.to(DEVICE)
             output = model(xb)
-            if task=='age':
+            
+            if task == 'age':
                 loss = criterion(output, yb)
             else: # gender
                 output = output.squeeze()
                 yb = yb.float()
                 loss = criterion(output, yb)
+            
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
         avg_train = running_loss / len(train_loader)
 
-        # Validation
         model.eval()
         val_loss = 0
         val_metric = 0 
@@ -197,48 +194,48 @@ def train_model(model, train_loader, val_loader, task='age', epochs=20, lr=1e-3,
             for xb, yb in val_loader:
                 xb, yb = xb.to(DEVICE), yb.to(DEVICE)
                 output = model(xb)
-                if task=='age':
+                
+                if task == 'age':
                     loss = criterion(output, yb)
                     val_metric += torch.abs(output - yb).mean().item()
                 else: # gender
                     output = output.squeeze()
                     yb = yb.float()
                     loss = criterion(output, yb)
-                    pred = (output>0.5).float()
-                    val_metric += (pred==yb).sum().item()
+                    pred = (output > 0.5).float()
+                    val_metric += (pred == yb).sum().item()
                 val_loss += loss.item()
 
-        avg_val = val_loss / len(val_loader)
-        if task=='age':
-            val_metric = val_metric / len(val_loader)
-            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val:.4f} | Val MAE: {val_metric:.4f}")
-
-            # Check for early stopping and save best model
-            scheduler.step(val_metric)
-            if val_metric < best_val_mae:
-                best_val_mae = val_metric
-                patience_counter = 0
-                best_model_state = model.state_dict()
-            else:
-                patience_counter += 1
-            
-            if patience_counter >= 10:
-                print(f"Early stopping at epoch {epoch} due to no improvement in Val MAE.")
-                break
-
+        avg_val_loss = val_loss / len(val_loader)
+        
+        if task == 'age':
+            avg_val_metric = val_metric / len(val_loader)
+            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val_loss:.4f} | Val MAE: {avg_val_metric:.4f}")
         else:
-            val_metric = val_metric / len(val_loader.dataset)
-            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val:.4f} | Val Acc: {val_metric:.4f}")
+            avg_val_metric = val_metric / len(val_loader.dataset)
+            print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train:.4f} | Val Loss: {avg_val_loss:.4f} | Val Acc: {avg_val_metric:.4f}")
+
+        # Check for early stopping and save best model
+        scheduler.step(avg_val_loss)
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+            best_model_state = model.state_dict()
+        else:
+            patience_counter += 1
+        
+        if patience_counter >= 10:
+            print(f"Early stopping at epoch {epoch} due to no improvement in Val Loss.")
+            break
 
         train_losses.append(avg_train)
-        val_losses.append(avg_val)
-        val_metrics.append(val_metric)
+        val_losses.append(avg_val_loss)
+        val_metrics.append(avg_val_metric)
 
-    # Save model
     os.makedirs(MODEL_DIR, exist_ok=True)
-    if task == 'age' and best_model_state:
+    if best_model_state:
         torch.save(best_model_state, os.path.join(MODEL_DIR, model_name))
-        print(f"Age model saved from best epoch with Val MAE: {best_val_mae:.4f}")
+        print(f"Model saved from best epoch with Val Loss: {best_val_loss:.4f}")
     else:
         torch.save(model.state_dict(), os.path.join(MODEL_DIR, model_name))
 
@@ -261,7 +258,6 @@ def train_model(model, train_loader, val_loader, task='age', epochs=20, lr=1e-3,
 
 # ----------------- MAIN -----------------
 def main():
-    # Check for GPU
     if torch.cuda.is_available():
         print(f"✅ GPU is available and will be used! Device: {torch.cuda.get_device_name(0)}")
     else:
@@ -271,26 +267,25 @@ def main():
     X_age, y_age, X_gender, y_gender = load_dataset()
     print(f"Total age samples: {len(X_age)} | Total gender samples: {len(X_gender)}")
 
-    # Split
     X_age_train, X_age_val, X_age_test, y_age_train, y_age_val, y_age_test, \
     X_gender_train, X_gender_val, X_gender_test, y_gender_train, y_gender_val, y_gender_test = \
         split_dataset(X_age, y_age, X_gender, y_gender)
 
-    # Dataloaders
-    age_train_loader = create_dataloader(X_age_train, y_age_train, task='age', transforms=age_train_transforms)
-    age_val_loader = create_dataloader(X_age_val, y_age_val, task='age', transforms=age_val_transforms)
+    # Dataloaders for age and gender using updated transforms
+    age_train_loader = create_dataloader(X_age_train, y_age_train, task='age', transforms=train_transforms)
+    age_val_loader = create_dataloader(X_age_val, y_age_val, task='age', transforms=val_transforms)
     gender_train_loader = create_dataloader(X_gender_train, y_gender_train, task='gender')
     gender_val_loader = create_dataloader(X_gender_val, y_gender_val, task='gender')
 
-    # Train Age model
-    print("Training Age model...")
-    age_model = BaseCNN(output_units=1, task='age')
-    train_model(age_model, age_train_loader, age_val_loader, task='age', epochs=EPOCHS_AGE, model_name='age_model.pth')
+    # Train Age model with transfer learning
+    print("Training Age model with ResNet...")
+    age_model = ResNetModel(output_units=1, task='age')
+    train_model(age_model, age_train_loader, age_val_loader, task='age', epochs=EPOCHS_AGE, model_name='age_model_resnet.pth')
 
-    # Train Gender model
-    print("Training Gender model...")
-    gender_model = BaseCNN(output_units=1, task='gender')
-    train_model(gender_model, gender_train_loader, gender_val_loader, task='gender', epochs=EPOCHS_GENDER, model_name='gender_model.pth')
+    # Train Gender model with transfer learning and early stopping
+    print("Training Gender model with ResNet...")
+    gender_model = ResNetModel(output_units=1, task='gender')
+    train_model(gender_model, gender_train_loader, gender_val_loader, task='gender', epochs=EPOCHS_GENDER, model_name='gender_model_resnet.pth')
 
     print("All models trained and saved successfully!")
 

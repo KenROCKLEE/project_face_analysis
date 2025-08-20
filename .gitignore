@@ -28,3 +28,5 @@ datasets/clean/gender
 datasets/age_gender.csv
 
 models
+
+test
