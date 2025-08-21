@@ -272,7 +272,7 @@ def main():
     if torch.cuda.is_available():
         print(f"✅ GPU is available and will be used! Device: {torch.cuda.get_device_name(0)}")
     else:
-        print("❌ GPU not available, using CPU. This will be slow.")
+        print("⚠️ No GPU found, using CPU")
 
     print("Loading dataset...")
     X_age, y_age, X_gender, y_gender = load_dataset()
