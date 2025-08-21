@@ -10,6 +10,7 @@ Classes: angry, fearful, happy, neutral, sad, surprise
 - Batch size: 32
 - Saves the best model based on validation accuracy
 - Incorporates ResNet-18 for transfer learning and fine-tuning
+- Generates and saves training history plots
 """
 
 import os
@@ -34,7 +35,7 @@ BATCH_SIZE = 32
 SAMPLES_PER_CLASS = 3000
 EPOCHS_PHASE1 = 10
 EPOCHS_PHASE2 = 50
-MODEL_DIR = 'models' # Added this line
+MODEL_DIR = 'models'
 MODEL_SAVE_PATH = "emotion_model_resnet.pth"
 
 # Get emotion classes
@@ -45,7 +46,7 @@ print(f"Emotion classes: {EMOTION_CLASSES}")
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if torch.cuda.is_available():
-    print(f"✅ GPU is available and will be used! Device: {torch.cuda.get_device_name(0)}")
+    print(f"✅ Using GPU: {torch.cuda.get_device_name(0)}")
 else:
     print("⚠️ No GPU found, using CPU")
 
@@ -142,7 +143,7 @@ def train_model(model, train_loader, val_loader, epochs, lr, phase_name, model_d
     model.to(DEVICE)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.5, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.5) 
     
     best_val_accuracy = 0.0
     patience_counter = 0
@@ -193,7 +194,7 @@ def train_model(model, train_loader, val_loader, epochs, lr, phase_name, model_d
 
         print(f"Epoch {epoch}/{epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val Accuracy: {val_accuracy:.4f}")
 
-        scheduler.step(avg_val_loss)
+        scheduler.step(avg_val_loss) # Or scheduler.step(val_accuracy) if monitoring accuracy
 
         # Check for improvement
         if val_accuracy > best_val_accuracy:
@@ -214,6 +215,36 @@ def train_model(model, train_loader, val_loader, epochs, lr, phase_name, model_d
     return train_losses, val_losses, val_accuracies
 
 # =========================
+# Plotting Function
+# =========================
+
+def plot_history(train_losses, val_losses, val_accuracies, phase_name, model_dir):
+    epochs = range(1, len(train_losses) + 1)
+
+    # Plot Loss
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, train_losses, 'b-o', label='Training Loss')
+    plt.plot(epochs, val_losses, 'r-o', label='Validation Loss')
+    plt.title(f'{phase_name} - Loss over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(model_dir, f'{phase_name.replace(" ", "_").lower()}_loss.png'))
+    plt.close()
+
+    # Plot Accuracy
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, val_accuracies, 'g-o', label='Validation Accuracy')
+    plt.title(f'{phase_name} - Accuracy over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(os.path.join(model_dir, f'{phase_name.replace(" ", "_").lower()}_accuracy.png'))
+    plt.close()
+
+# =========================
 # Main Training Logic
 # =========================
 
@@ -223,7 +254,13 @@ print("\nPhase 1: Training only the top layers (Feature Extraction)")
 # The final fc layer is the only one with requires_grad=True by default
 # so we only need to pass its parameters to the optimizer
 optimizer = optim.Adam(model.resnet.fc.parameters(), lr=1e-3)
-train_model(model, train_loader, val_loader, EPOCHS_PHASE1, lr=1e-3, phase_name="Phase 1", model_dir=MODEL_DIR, model_save_path=MODEL_SAVE_PATH)
+phase1_train_losses, phase1_val_losses, phase1_val_accuracies = train_model(
+    model, train_loader, val_loader, EPOCHS_PHASE1, lr=1e-3, 
+    phase_name="Phase 1: Feature Extraction", model_dir=MODEL_DIR, model_save_path=MODEL_SAVE_PATH
+)
+# Plot graphs for Phase 1
+plot_history(phase1_train_losses, phase1_val_losses, phase1_val_accuracies, 
+             "Phase 1: Feature Extraction", MODEL_DIR)
 
 
 # Phase 2: Fine-tuning
@@ -232,11 +269,20 @@ print("\nPhase 2: Fine-tuning the entire model")
 model.load_state_dict(torch.load(os.path.join(MODEL_DIR, MODEL_SAVE_PATH)))
 
 # Unfreeze the last few blocks for fine-tuning
+# A common strategy is to unfreeze `layer4` and the `fc` layer for ResNet
 for param in model.resnet.parameters():
-    param.requires_grad = True # Unfreeze all layers
+    param.requires_grad = True # Unfreeze all layers of ResNet for fine-tuning
 
 # Recompile the optimizer with all parameters and a much lower learning rate
 optimizer_ft = optim.Adam(model.parameters(), lr=1e-5) 
-train_model(model, train_loader, val_loader, EPOCHS_PHASE2, lr=1e-5, phase_name="Phase 2", model_dir=MODEL_DIR, model_save_path=MODEL_SAVE_PATH)
+phase2_train_losses, phase2_val_losses, phase2_val_accuracies = train_model(
+    model, train_loader, val_loader, EPOCHS_PHASE2, lr=1e-5, 
+    phase_name="Phase 2: Fine-tuning", model_dir=MODEL_DIR, model_save_path=MODEL_SAVE_PATH
+)
+# Plot graphs for Phase 2
+plot_history(phase2_train_losses, phase2_val_losses, phase2_val_accuracies, 
+             "Phase 2: Fine-tuning", MODEL_DIR)
+
 
 print(f"✅ Training complete. Best model saved to {os.path.join(MODEL_DIR, MODEL_SAVE_PATH)}")
+
