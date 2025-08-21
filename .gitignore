@@ -25,6 +25,7 @@ Thumbs.db
 datasets/raw/UTKFace
 datasets/clean/age
 datasets/clean/gender
+datasets/clean/emotion
 datasets/age_gender.csv
 
 models
