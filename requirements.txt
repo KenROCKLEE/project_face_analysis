@@ -9,4 +9,3 @@ torchmetrics==0.11.4
 torchsummary==1.5.1
 mediapipe==0.10.21
 opencv-python==4.8.1.78
-tensorflow==2.15.0
