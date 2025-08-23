@@ -13,6 +13,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms, models
 from PIL import Image
+from sklearn.model_selection import train_test_split
+
 
 # ----------------- CONFIG -----------------
 IMG_SIZE = (128, 128)
