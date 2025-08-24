@@ -101,6 +101,7 @@ python real_time_detection/real_time_detection_program.py
 
 - Requires a webcam.
 - Displays age group, gender, and emotion predictions for detected faces.
+- Manually drag all the model to real_time_detection folder.
 
 ### 2. Test on Custom Images (Jupyter Notebook)
 
@@ -118,8 +119,8 @@ python real_time_detection/real_time_detection_program.py
 
 ## Credits
 
-- [UTKFace Dataset](https://susanqq.github.io/UTKFace/)
-- [FER-2013 Dataset](https://www.kaggle.com/datasets/msambare/fer2013)
+- [UTKFace Dataset](https://www.kaggle.com/datasets/jangedoo/utkface-new)
+- [Facial Emotion Recognition Image Dataset](https://www.kaggle.com/datasets/sujaykapadnis/emotion-recognition-dataset)
 - [PyTorch](https://pytorch.org/)
 - [MediaPipe](https://mediapipe.dev/)
 - [OpenCV](https://opencv.org/)

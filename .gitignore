@@ -32,4 +32,6 @@ models
 
 test
 
-real_time_detection/
+real_time_detection/age_model_resnet.pth
+real_time_detection/gender_model_resnet.pth
+real_time_detection/emotion_model_resnet.pth
