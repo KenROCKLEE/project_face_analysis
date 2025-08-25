@@ -7,7 +7,7 @@ from PIL import Image
 RAW_DIR = 'datasets/raw/UTKFace'
 CLEAN_DIR = 'datasets/clean'
 AGE_DIR = os.path.join(CLEAN_DIR, 'age')
-#GENDER_DIR = os.path.join(CLEAN_DIR, 'gender')
+GENDER_DIR = os.path.join(CLEAN_DIR, 'gender')
 IMG_SIZE = (128, 128)
 
 # New Age groups (0–105, last bin 97–105)
@@ -23,19 +23,19 @@ AGE_GROUPS = [
 ]
 
 # Gender labels
-#GENDER_LABELS = {0: 'male', 1: 'female'}
+GENDER_LABELS = {0: 'male', 1: 'female'}
 
 # --- CREATE FOLDERS ---
 for start, end in AGE_GROUPS:
     folder_name = f"{start}-{end}"
     os.makedirs(os.path.join(AGE_DIR, folder_name), exist_ok=True)
 
-#for gender in GENDER_LABELS.values():
-#    os.makedirs(os.path.join(GENDER_DIR, gender), exist_ok=True)
+for gender in GENDER_LABELS.values():
+    os.makedirs(os.path.join(GENDER_DIR, gender), exist_ok=True)
 
 # --- GROUP FILES BY AGE AND GENDER ---
 age_files = {f"{start}-{end}": [] for start, end in AGE_GROUPS}
-#gender_files = {g: [] for g in GENDER_LABELS.values()}
+gender_files = {g: [] for g in GENDER_LABELS.values()}
 
 files = [f for f in os.listdir(RAW_DIR) if f.endswith('.jpg')]
 
@@ -56,9 +56,9 @@ for fname in files:
                 break
 
         # Gender
-        #gender_label = GENDER_LABELS.get(gender, 'unknown')
-        #if gender_label != 'unknown':
-            #gender_files[gender_label].append(fname)
+        gender_label = GENDER_LABELS.get(gender, 'unknown')
+        if gender_label != 'unknown':
+            gender_files[gender_label].append(fname)
 
     except Exception as e:
         print(f"Skipping {fname}: {e}")
@@ -81,12 +81,12 @@ for age_group, files_list in age_files.items():
         img.save(os.path.join(dest_folder, fname))
 
 # --- COPY AND RESIZE ALL GENDER FILES ---
-#for gender, files_list in gender_files.items():
-    #dest_folder = os.path.join(GENDER_DIR, gender)
-    #for fname in files_list:
-        #img_path = os.path.join(RAW_DIR, fname)
-        #img = Image.open(img_path).convert('RGB')
-        #img = img.resize(IMG_SIZE)
-        #img.save(os.path.join(dest_folder, fname))
+for gender, files_list in gender_files.items():
+    dest_folder = os.path.join(GENDER_DIR, gender)
+    for fname in files_list:
+        img_path = os.path.join(RAW_DIR, fname)
+        img = Image.open(img_path).convert('RGB')
+        img = img.resize(IMG_SIZE)
+        img.save(os.path.join(dest_folder, fname))
 
 print("Finished organizing, resizing, and balancing dataset!")
