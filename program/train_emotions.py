@@ -115,8 +115,6 @@ class EmotionDataset(Dataset):
 
 def create_dataloader(X, y, batch_size=BATCH_SIZE, transforms=None, shuffle=True):
     dataset = EmotionDataset(X, y, transform=transforms)
-    # When all classes are already balanced via undersampling, a WeightedRandomSampler is not strictly needed,
-    # and simple shuffling is sufficient.
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
