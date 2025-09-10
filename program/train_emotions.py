@@ -4,7 +4,7 @@ Author: Your Name
 Date: 2025-08-22
 
 This script trains a CNN model for emotion detection using the cleaned FER-2013 dataset.
-Classes: angry, fearful, happy, neutral, sad, surprise
+Classes: angry, happy, neutral, sad, surprise
 - Balances every class by undersampling to the size of the smallest class.
 - Input size: 128x128
 - Batch size: 32
@@ -23,7 +23,7 @@ from torchvision import transforms, models
 from sklearn.model_selection import train_test_split
 from PIL import Image
 from collections import Counter
-import random # Ensure random module is imported
+import random 
 
 # ----------------- CONFIG -----------------
 IMG_SIZE = (128, 128)
